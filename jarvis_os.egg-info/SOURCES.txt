@@ -1,0 +1,5 @@
+setup.py
+jarvis_os.egg-info/PKG-INFO
+jarvis_os.egg-info/SOURCES.txt
+jarvis_os.egg-info/dependency_links.txt
+jarvis_os.egg-info/top_level.txt
