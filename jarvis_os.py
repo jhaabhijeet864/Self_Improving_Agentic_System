@@ -29,6 +29,7 @@ class AgentConfig:
     task_timeout: float = 300.0
     memory_size: int = 1000
     log_level: str = "INFO"
+    redis_url: Optional[str] = None
     auto_optimize: bool = True
     optimization_interval: float = 300.0  # 5 minutes
     error_threshold: float = 0.1  # 10%
@@ -61,6 +62,7 @@ class JarvisOS:
         self.memory = MemoryManager(
             short_term_size=config.memory_size,
             long_term_file=f"{config.name}_memory.json",
+            redis_url=config.redis_url,
         )
         self.router = FastRouter()
         

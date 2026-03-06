@@ -13,6 +13,108 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class DistributedMemory:
+    """
+    Redis-backed memory for distributed swarms.
+    Acts as shared long-term memory across multiple Jarvis-OS instances.
+    """
+    
+    def __init__(self, redis_url: str = "redis://localhost:6379/0", prefix: str = "jarvis:"):
+        """
+        Initialize Redis connection.
+        
+        Args:
+            redis_url: Redis connection string
+            prefix: Key prefix for isolation
+        """
+        self.prefix = prefix
+        try:
+            import redis
+            self.redis = redis.from_url(redis_url, decode_responses=True)
+            self.redis.ping() # test connection
+        except ImportError:
+            logger.error("Redis package not installed. Run: pip install redis")
+            self.redis = None
+        except Exception as e:
+            logger.error(f"Failed to connect to Redis: {e}")
+            self.redis = None
+            
+    def _full_key(self, key: str) -> str:
+        return f"{self.prefix}{key}"
+        
+    def set(self, key: str, value: Any, ttl: Optional[float] = None, priority: int = 0):
+        if not self.redis:
+            return
+            
+        import time
+        entry = {
+            "key": key,
+            "value": value,
+            "timestamp": time.time(),
+            "ttl": ttl,
+            "access_count": 0,
+            "priority": priority,
+            "metadata": {}
+        }
+        
+        try:
+            # We must serialize value
+            serialized = json.dumps(entry, default=str)
+            if ttl:
+                self.redis.setex(self._full_key(key), int(ttl), serialized)
+            else:
+                self.redis.set(self._full_key(key), serialized)
+        except Exception as e:
+            logger.error(f"Failed to save to Redis distributed memory: {e}")
+
+    def get(self, key: str) -> Optional[Any]:
+        if not self.redis:
+            return None
+            
+        try:
+            data = self.redis.get(self._full_key(key))
+            if not data:
+                return None
+            
+            entry_dict = json.loads(data)
+            
+            # Reconstruct MemoryEntry just to check rules
+            import time
+            ttl = entry_dict.get("ttl")
+            if ttl and (time.time() - entry_dict["timestamp"]) > ttl:
+                self.delete(key)
+                return None
+            
+            # Increment access count
+            entry_dict["access_count"] = entry_dict.get("access_count", 0) + 1
+            if ttl:
+                self.redis.setex(self._full_key(key), int(ttl), json.dumps(entry_dict, default=str))
+            else:
+                self.redis.set(self._full_key(key), json.dumps(entry_dict, default=str))
+                
+            return entry_dict["value"]
+        except Exception as e:
+            logger.error(f"Failed to retrieve from Redis distributed memory: {e}")
+            return None
+
+    def delete(self, key: str) -> bool:
+        if not self.redis:
+            return False
+        return bool(self.redis.delete(self._full_key(key)))
+
+    def clear(self):
+        if not self.redis:
+            return
+        keys = self.redis.keys(f"{self.prefix}*")
+        if keys:
+            self.redis.delete(*keys)
+
+    def size(self) -> int:
+        if not self.redis:
+            return 0
+        return len(self.redis.keys(f"{self.prefix}*"))
+
+
 @dataclass
 class MemoryEntry:
     """A single memory entry"""
@@ -255,6 +357,7 @@ class MemoryManager:
         self,
         short_term_size: int = 1000,
         long_term_file: str = "memory.json",
+        redis_url: Optional[str] = None,
     ):
         """
         Initialize memory manager
@@ -262,9 +365,13 @@ class MemoryManager:
         Args:
             short_term_size: Short-term memory capacity
             long_term_file: Long-term memory storage file
+            redis_url: Redis URL for distributed scaling across agents
         """
         self.short_term = ShortTermMemory(short_term_size)
-        self.long_term = LongTermMemory(long_term_file)
+        if redis_url:
+            self.long_term = DistributedMemory(redis_url)
+        else:
+            self.long_term = LongTermMemory(long_term_file)
         self.stats = {
             "short_term_hits": 0,
             "long_term_hits": 0,
