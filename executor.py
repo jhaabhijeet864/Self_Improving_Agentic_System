@@ -41,16 +41,18 @@ class Executor:
     Handles concurrent execution, error handling, and performance monitoring
     """
     
-    def __init__(self, max_workers: int = 10, timeout: float = 300.0):
+    def __init__(self, max_workers: int = 10, timeout: float = 300.0, db=None):
         """
         Initialize executor
         
         Args:
             max_workers: Maximum concurrent tasks
             timeout: Task execution timeout in seconds
+            db: Optional JarvisDatabase instance for persistence
         """
         self.max_workers = max_workers
         self.timeout = timeout
+        self.db = db
         self.tasks: Dict[str, TaskResult] = {}
         self.semaphore = asyncio.Semaphore(max_workers)
         self.task_queue: asyncio.Queue = None
@@ -113,8 +115,21 @@ class Executor:
         finally:
             result.execution_time = time.time() - start_time
             self.tasks[task_id] = result
+            if self.db:
+                # Fire and forget if we are in event loop
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self.db.save_task(result))
+                except RuntimeError:
+                    pass
             
         return result
+        
+    async def load_state(self):
+        """Load persistent state from database"""
+        if self.db:
+            db_tasks = await self.db.get_all_tasks()
+            self.tasks.update(db_tasks)
     
     async def execute_batch(
         self,
@@ -145,37 +160,57 @@ class Executor:
         
         return results
     
-    def get_task_result(self, task_id: str) -> Optional[TaskResult]:
+    async def get_task_result(self, task_id: str) -> Optional[TaskResult]:
         """Get result of a completed task"""
+        if self.db:
+            res_dict = await self.db.get_task_result(task_id)
+            if res_dict:
+                return TaskResult(
+                    task_id=res_dict["task_id"],
+                    status=TaskStatus(res_dict["status"]),
+                    result=res_dict["result"],
+                    error=res_dict["error"],
+                    execution_time=res_dict["execution_time"],
+                    timestamp=res_dict["timestamp"],
+                    metadata=res_dict["metadata"],
+                )
         return self.tasks.get(task_id)
     
-    def get_all_results(self) -> Dict[str, TaskResult]:
+    async def get_all_results(self) -> Dict[str, TaskResult]:
         """Get all task results"""
+        if self.db:
+            db_tasks = await self.db.get_all_tasks()
+            # Merge with in-memory just in case
+            merged = self.tasks.copy()
+            merged.update(db_tasks)
+            return merged
         return self.tasks.copy()
     
-    def get_performance_stats(self) -> Dict[str, Any]:
+    async def get_performance_stats(self) -> Dict[str, Any]:
         """Get performance statistics"""
-        if not self.tasks:
+        all_tasks = await self.get_all_results() if self.db else self.tasks
+        if not all_tasks:
             return {
                 "total_tasks": 0,
                 "completed": 0,
                 "failed": 0,
+                "success_rate": 0.0,
                 "avg_execution_time": 0.0,
             }
         
-        completed = sum(1 for t in self.tasks.values() if t.status == TaskStatus.COMPLETED)
-        failed = sum(1 for t in self.tasks.values() if t.status == TaskStatus.FAILED)
-        avg_time = sum(t.execution_time for t in self.tasks.values()) / len(self.tasks)
+        completed = sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETED)
+        failed = sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED)
+        avg_time = sum(t.execution_time for t in all_tasks.values()) / len(all_tasks)
         
         return {
-            "total_tasks": len(self.tasks),
+            "total_tasks": len(all_tasks),
             "completed": completed,
             "failed": failed,
-            "success_rate": completed / len(self.tasks) if self.tasks else 0,
+            "success_rate": completed / len(all_tasks) if all_tasks else 0,
             "avg_execution_time": avg_time,
         }
     
-    def clear_completed_tasks(self, older_than: Optional[float] = None):
+    async def clear_completed_tasks(self, older_than: Optional[float] = None):
         """
         Clear completed tasks
         

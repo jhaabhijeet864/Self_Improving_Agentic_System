@@ -355,30 +355,31 @@ class MemoryManager:
     
     def __init__(
         self,
+        db=None,
         short_term_size: int = 1000,
-        long_term_file: str = "memory.json",
         redis_url: Optional[str] = None,
     ):
         """
         Initialize memory manager
         
         Args:
+            db: JarvisDatabase instance for sqlite persistence
             short_term_size: Short-term memory capacity
-            long_term_file: Long-term memory storage file
             redis_url: Redis URL for distributed scaling across agents
         """
+        self.db = db
         self.short_term = ShortTermMemory(short_term_size)
+        self.redis_long_term = None
         if redis_url:
-            self.long_term = DistributedMemory(redis_url)
-        else:
-            self.long_term = LongTermMemory(long_term_file)
+            self.redis_long_term = DistributedMemory(redis_url)
+            
         self.stats = {
             "short_term_hits": 0,
             "long_term_hits": 0,
             "misses": 0,
         }
     
-    def store(
+    async def store(
         self,
         key: str,
         value: Any,
@@ -388,23 +389,19 @@ class MemoryManager:
     ):
         """
         Store a value in memory
-        
-        Args:
-            key: Memory key
-            value: Value to store
-            persistent: If True, also store in long-term
-            ttl: Time to live in seconds
-            priority: Priority level for eviction
         """
         self.short_term.set(key, value, ttl, priority)
         
         if persistent:
-            self.long_term.set(key, value, ttl, priority)
+            if self.redis_long_term:
+                self.redis_long_term.set(key, value, ttl, priority)
+            elif self.db:
+                import time
+                await self.db.set_memory(key, value, timestamp=time.time(), ttl=ttl, priority=priority)
     
-    def retrieve(self, key: str) -> Optional[Any]:
+    async def retrieve(self, key: str) -> Optional[Any]:
         """
         Retrieve a value from memory
-        Tries short-term first, then long-term
         """
         # Try short-term
         value = self.short_term.get(key)
@@ -413,7 +410,11 @@ class MemoryManager:
             return value
         
         # Try long-term
-        value = self.long_term.get(key)
+        if self.redis_long_term:
+            value = self.redis_long_term.get(key)
+        elif self.db:
+            value = await self.db.get_memory(key)
+            
         if value is not None:
             self.stats["long_term_hits"] += 1
             # Store in short-term for future access
@@ -423,18 +424,26 @@ class MemoryManager:
         self.stats["misses"] += 1
         return None
     
-    def delete(self, key: str) -> bool:
+    async def delete(self, key: str) -> bool:
         """Delete from both memories"""
         short_deleted = self.short_term.delete(key)
-        long_deleted = self.long_term.delete(key)
-        return short_deleted or long_deleted
+        
+        if self.redis_long_term:
+            self.redis_long_term.delete(key)
+        elif self.db:
+            await self.db.delete_memory(key)
+            
+        return short_deleted or True
     
-    def clear_all(self):
+    async def clear_all(self):
         """Clear all memories"""
         self.short_term.clear()
-        self.long_term.clear()
+        if self.redis_long_term:
+            self.redis_long_term.clear()
+        elif self.db:
+            await self.db.clear_memory()
     
-    def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> Dict[str, Any]:
         """Get memory statistics"""
         total_accesses = (
             self.stats["short_term_hits"] +
@@ -442,9 +451,15 @@ class MemoryManager:
             self.stats["misses"]
         )
         
+        long_term_size = 0
+        if self.redis_long_term:
+            long_term_size = self.redis_long_term.size()
+        elif self.db:
+            long_term_size = await self.db.get_memory_size()
+            
         return {
             "short_term_size": self.short_term.size(),
-            "long_term_size": self.long_term.size(),
+            "long_term_size": long_term_size,
             "short_term_hits": self.stats["short_term_hits"],
             "long_term_hits": self.stats["long_term_hits"],
             "misses": self.stats["misses"],

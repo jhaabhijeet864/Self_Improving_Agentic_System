@@ -16,7 +16,8 @@ from dataclasses import asdict
 import os
 
 # Import Jarvis components
-from jarvis_os import JarvisOS, AgentConfig, TaskPriority
+from jarvis_os import JarvisOS, AgentConfig
+from fast_router import TaskPriority
 from autopsy import Autopsy, LogEntry
 
 app = FastAPI(
@@ -207,7 +208,7 @@ async def get_task_status(task_id: str):
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    result = agent.executor.get_task_result(task_id)
+    result = await agent.executor.get_task_result(task_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     
@@ -229,7 +230,7 @@ async def get_all_tasks(
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    all_results = agent.executor.get_all_results()
+    all_results = await agent.executor.get_all_results()
     tasks = list(all_results.items())[offset:offset + limit]
     
     return {
@@ -307,7 +308,7 @@ async def get_memory_stats():
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    return agent.memory.get_stats()
+    return await agent.memory.get_stats()
 
 
 @app.post("/api/memory/store")
@@ -316,7 +317,7 @@ async def store_in_memory(key: str, value: Any, persistent: bool = False):
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    agent.memory.store(key, value, persistent=persistent)
+    await agent.memory.store(key, value, persistent=persistent)
     return {"status": "stored", "key": key}
 
 
@@ -326,7 +327,7 @@ async def retrieve_from_memory(key: str):
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    value = agent.memory.retrieve(key)
+    value = await agent.memory.retrieve(key)
     if value is None:
         raise HTTPException(status_code=404, detail=f"Key {key} not found")
     
@@ -339,7 +340,7 @@ async def delete_from_memory(key: str):
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    agent.memory.delete(key)
+    await agent.memory.delete(key)
     return {"status": "deleted", "key": key}
 
 

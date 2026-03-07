@@ -15,6 +15,7 @@ from mutation import Mutation
 from memory_manager import MemoryManager
 from fast_router import FastRouter, TaskPriority
 from structured_logger import StructuredLogger
+from database import JarvisDatabase
 
 
 logger = logging.getLogger(__name__)
@@ -52,16 +53,21 @@ class JarvisOS:
         self.config = config
         self.logger = StructuredLogger(config.name, config.log_level)
         
-        # Initialize components
+        # Initialize database
+        db_path = f"{config.name}_state.sqlite"
+        self.db = JarvisDatabase(db_path=db_path)
+        
+        # Initialize components with db
         self.executor = Executor(
             max_workers=config.max_workers,
             timeout=config.task_timeout,
+            db=self.db
         )
-        self.autopsy = Autopsy()
+        self.autopsy = Autopsy(db=self.db)
         self.mutation = Mutation()
         self.memory = MemoryManager(
+            db=self.db,
             short_term_size=config.memory_size,
-            long_term_file=f"{config.name}_memory.json",
             redis_url=config.redis_url,
         )
         self.router = FastRouter()
@@ -77,7 +83,13 @@ class JarvisOS:
         """Start the agent"""
         self.running = True
         self.loop = asyncio.get_event_loop()
-        self.logger.info("Agent started")
+        
+        # Initialize persistent state database
+        await self.db.init()
+        await self.executor.load_state()
+        await self.autopsy.load_state()
+        
+        self.logger.info("Agent started", extra={"phase": "initialization"})
         
         if self.config.auto_optimize:
             # Start optimization loop
@@ -128,7 +140,7 @@ class JarvisOS:
         
         try:
             # Store task in memory
-            self.memory.store(
+            await self.memory.store(
                 f"task:{task_id}",
                 {"type": task_type, "params": task_params, "status": "running"},
                 persistent=persistent_memory,

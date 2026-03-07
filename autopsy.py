@@ -50,17 +50,20 @@ class Autopsy:
     Provides insights for self-improvement
     """
     
-    def __init__(self, max_entries: int = 10000):
+    def __init__(self, max_entries: int = 10000, db=None):
         """
         Initialize Autopsy
         
         Args:
             max_entries: Maximum log entries to keep
+            db: JarvisDatabase instance for persistent storage
         """
         self.max_entries = max_entries
+        self.db = db
         self.logs: List[LogEntry] = []
         self.error_patterns: Counter = Counter()
         self.performance_history: List[float] = []
+        self._db_loaded = False
         
     def add_log(self, entry: LogEntry):
         """Add a log entry"""
@@ -77,6 +80,32 @@ class Autopsy:
         # Track performance
         if entry.duration is not None:
             self.performance_history.append(entry.duration)
+            
+        # Asynchronously write to DB
+        if self.db and self._db_loaded:
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.db.save_log(entry))
+            except RuntimeError:
+                pass
+                
+    async def load_state(self):
+        """Load historical logs from database across restarts"""
+        if self.db:
+            historical_logs = await self.db.get_all_logs()
+            for log in historical_logs:
+                # Add silently without triggering recursive db saving
+                self.logs.append(log)
+                if log.level == "ERROR":
+                    self.error_patterns[log.error or "unknown"] += 1
+                if log.duration is not None:
+                    self.performance_history.append(log.duration)
+            
+            # Trim to max
+            if len(self.logs) > self.max_entries:
+                self.logs = self.logs[-self.max_entries:]
+            self._db_loaded = True
     
     def get_error_rate(self) -> float:
         """Calculate error rate"""

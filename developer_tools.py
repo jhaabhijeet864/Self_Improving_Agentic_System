@@ -21,6 +21,21 @@ class CLIExecutor(Executor):
     Perfect for Swara AI when it acts as a Developer Agent.
     """
     
+    async def execute(
+        self,
+        func: str,
+        *args,
+        task_id: Optional[str] = None,
+        **kwargs
+    ) -> TaskResult:
+        """
+        Override the base execute method. For CLIExecutor, the 'func' 
+        parameter is actually the raw terminal command string.
+        """
+        cwd = kwargs.get("cwd")
+        env = kwargs.get("env")
+        return await self.execute_command(func, cwd=cwd, env=env, task_id=task_id)
+
     async def execute_command(
         self,
         command: str,
@@ -113,7 +128,7 @@ import functools
 from typing import Callable
 from jarvis_os import JarvisOS
 
-def jarvis_tool(agent: JarvisOS, task_type: str, priority=None):
+def jarvis_tool(agent: JarvisOS, task_type: str, priority=None, requires_approval: bool = False):
     """
     Decorator to effortlessly register Swara AI functions into Jarvis-OS.
     Any function decorated with this will automatically be 
@@ -123,15 +138,36 @@ def jarvis_tool(agent: JarvisOS, task_type: str, priority=None):
         agent: The JarvisOS instance to bind this tool to.
         task_type: The string identifier for routing (e.g., 'file_writer').
         priority: Optional FastRouter task priority.
+        requires_approval: If True, the decorator will block execution 
+                           and demand human terminal input to proceed.
     """
     def decorator(func: Callable):
-        # Register the raw function as a native capable route
-        # (Assuming you want all tools to hit the default Executor for simplicity)
         
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             from fast_router import TaskPriority
+            import asyncio
+            
             eff_priority = priority or TaskPriority.NORMAL
+            
+            # --- Human-in-the-Loop Security Block ---
+            if requires_approval:
+                logger.warning(f"⚠️ SECURITY: Swara AI is attempting to execute dangerous tool '{task_type}'.")
+                print(f"\n[APPROVAL NEEDED] Swara AI wants to use: {func.__name__}")
+                print(f"Args: {args}")
+                print(f"Kwargs: {kwargs}")
+                
+                 # In a real GUI app, this would send an event to the frontend.
+                 # Offload the blocking OS call so we don't freeze the asyncio event loop!
+                response = await asyncio.to_thread(input, "Allow execution? (y/N): ")
+                response = response.strip().lower()
+                
+                if response != 'y':
+                    logger.error(f"Execution of '{task_type}' rejected by Human.")
+                    raise PermissionError(f"Human user rejected execution of '{func.__name__}'.")
+                
+                logger.info(f"Execution of '{task_type}' APPROVED by Human.")
+            # ----------------------------------------
             
             logger.info(f"[{task_type}] Intercepted method call '{func.__name__}', routing to Jarvis...")
             result = await agent.execute_task(
@@ -154,22 +190,60 @@ def jarvis_tool(agent: JarvisOS, task_type: str, priority=None):
 import tempfile
 import os
 import sys
+import ast
+
+class SecurityViolationError(Exception):
+    pass
 
 class SandboxManager:
     """
     Safety wrapper to evaluate AI-generated code strings.
     Swara AI can use this to 'test' python logic before writing it to a project.
+    Now equipped with AST parsing to block dangerous terminal imports.
     """
+    
+    FORBIDDEN_IMPORTS = {"os", "subprocess", "sys", "pty", "shutil"}
     
     def __init__(self, agent: JarvisOS):
         self.agent = agent
         # We use a CLIExecutor for the sandbox to get timeout/crash protection
         self.sandbox_executor = CLIExecutor(max_workers=5, timeout=10.0)
         
+    def _scan_for_forbidden_imports(self, code_string: str):
+        """
+        Parses the code string into an Abstract Syntax Tree (AST) 
+        and searches for forbidden modules to prevent malicious escapes.
+        """
+        try:
+            tree = ast.parse(code_string)
+        except SyntaxError as e:
+            return False, f"Syntax Error in generated code: {e}"
+            
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split('.')[0] in self.FORBIDDEN_IMPORTS:
+                        return False, f"SECURITY VIOLATION: Import of '{alias.name}' is blocked in Sandbox."
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.split('.')[0] in self.FORBIDDEN_IMPORTS:
+                    return False, f"SECURITY VIOLATION: Import from '{node.module}' is blocked in Sandbox."
+                    
+        return True, ""
+        
     async def evaluate_code(self, python_code_string: str) -> Dict[str, Any]:
         """
         Write code to a temporary file, run it, and capture the output safely.
         """
+        # 0. AST Static Analysis Security Check!
+        is_safe, error_msg = self._scan_for_forbidden_imports(python_code_string)
+        if not is_safe:
+            self.agent.logger.warning(f"Sandbox blocked execution: {error_msg}")
+            return {
+                "success": False,
+                "error": error_msg,
+                "stdout": "Execution Blocked by Jarvis Sandbox Security Policy."
+            }
+            
         # 1. Create a secure temporary file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
             temp_file.write(python_code_string)
