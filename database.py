@@ -35,6 +35,23 @@ async def init_db():
                 data TEXT
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS confidence_records (
+                trace_id TEXT PRIMARY KEY,
+                predicted_confidence REAL NOT NULL,
+                actual_success BOOLEAN NOT NULL,
+                recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS calibration_profiles (
+                profile_id TEXT PRIMARY KEY,
+                temperature_scalar REAL NOT NULL,
+                brier_score REAL,
+                records_used INTEGER NOT NULL,
+                fitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.commit()
 
 async def save_task(task_id: str, status: str, result: Optional[Any], error: Optional[str], execution_time: float, timestamp: float, metadata: Dict[str, Any]):

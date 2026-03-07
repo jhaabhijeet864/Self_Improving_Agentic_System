@@ -628,6 +628,41 @@ async def test_session_goal_achievement():
 
 ---
 
+### Chapter 3: Epistemics (Phases 8-13)
+
+**Phase 8: Confidence Calibration (Temperature Scaling)**
+**Status**: READY TO IMPLEMENT | **Effort**: 20-30 hours | **Criticality**: HIGHEST
+- Measure true accuracy of predictions bucketed by confidence scores (reliability diagrams).
+- Apply temperature scaling ($T$) to logits to match predicted probability with actual success rates.
+- *Files:* `calibration.py` (`CalibrationTracker`, `fit_temperature()`)
+
+**Phase 9: Adversarial Probing (Red-Teaming)**
+- Use the cloud LLM to generate ambiguous/edge-case inputs across the 10 SFT categories.
+- Test against the live system and use failures as hard negative examples in the SFT dataset.
+- *Files:* `red_teaming.py` (`RedTeamEngine`)
+
+**Phase 10: Skill Crystallization (Proceduralization)**
+- Identify sequences of commands that repeatedly achieve the same goal.
+- Compile these into named "Skills" (macros) with preconditions that bypass full LLM inference for extreme speedups.
+- *Files:* `skill_library.py`
+
+**Phase 11: Predictive Failure Prevention**
+- Train a lightweight model (e.g., Logistic Regression via `scikit-learn`) on historical `CausalTrace` features (prompt length, intent, warming, active sessions).
+- If failure probability > threshold (e.g., 0.7), proactively route to the cloud fallback instead of failing locally.
+- *Files:* `failure_predictor.py`
+
+**Phase 12: Knowledge Distillation (Fighting Instruction Debt)**
+- Combat "instruction debt" from accumulating mutation rules.
+- Periodically prompt the LLM to compress `instructions.md` using the last 90 days of successful traces, outputting a consolidated, non-contradictory instruction set.
+- *Files:* `distillation_engine.py`
+
+**Phase 13: Multi-Objective Pareto Optimization**
+- Expand A/B experiment evaluation from a single metric (success rate) to multiple (success rate, latency, cost, memory use).
+- Evaluate if treatment is Pareto-better (better on at least one, worse on none) before promotion.
+- *Files:* `pareto_evaluator.py`
+
+---
+
 ## 6. Execution Rules for AI Agents
 *   **Read before you write**: If you are unsure of an interface, read `executor.py`, `dashboard_api.py`, or `fast_router.py` before modifying.
 *   **Verify syntax**: Ensure imports exist (e.g., `scipy`, `sentence-transformers`, `chromadb`). Add them to `requirements.txt` / install them if missing.

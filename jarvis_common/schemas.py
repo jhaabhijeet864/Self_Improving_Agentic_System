@@ -87,3 +87,18 @@ class Directive(BaseModel):
     directive_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: DirectiveType
     payload: Dict[str, Any]
+
+from datetime import datetime
+
+class ConfidenceRecord(BaseModel):
+    trace_id: str
+    predicted_confidence: float
+    actual_success: bool
+    timestamp: datetime = Field(default_factory=datetime.now)
+
+class CalibrationProfile(BaseModel):
+    profile_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    temperature_scalar: float = 1.0
+    brier_score: Optional[float] = None
+    last_fitted_at: datetime = Field(default_factory=datetime.now)
+    records_used: int
