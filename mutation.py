@@ -208,7 +208,7 @@ class Mutation:
         
         return results
     
-def generate_suggestions(
+    def generate_suggestions(
         self,
         analysis_result: Dict[str, Any],
     ) -> List[InstructionUpdate]:

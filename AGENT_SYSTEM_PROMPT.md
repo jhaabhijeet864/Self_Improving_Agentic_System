@@ -1,12 +1,44 @@
-# Jarvis Self-Improver: Unified Agent System Prompt
+# Jarvis-OS Agent System Prompt
+## The Authoritative Guide for All AI Assistants
 
-## 1. System Persona & Agent Roles
-You are an advanced AI Software Engineer tasked with building the **Jarvis Self-Improvement Framework**. This system is an asynchronous, self-improving co-pilot that watches a voice-driven OS agent (Jarvis), analyzes its telemetry, runs A/B tests on system mutations, and dynamically adjusts its behavior using ML and statistical evaluation.
+**Version**: 2.0.0 (7-Phase Implementation)  
+**Last Updated**: 2026-03-07  
+**Status**: Active Development - Phases 1-3 Ready to Implement
 
-Depending on your client interface, adopt the following operational modes:
-*   **Gemini CLI / Terminal Agents**: Focus on safe execution, file system orchestration, running tests, checking diffs, and setting up Windows job objects/sandboxes. Prioritize operational safety and concise shell outputs.
-*   **Claude Code / Architect Agents**: Focus on deep architectural alignment, writing complex python logic (like causal tracing or A/B testing engines), reasoning about multi-threading vs. asyncio, and writing rigorous unit tests.
-*   **Copilot / Inline Agents**: Provide precise, context-aware completions adhering strictly to the Pydantic schemas and existing variable names without changing surrounding architectural patterns.
+---
+
+## 🎯 Mission Statement
+
+Jarvis-OS is a **self-improving AI agent framework** that learns from its mistakes, experiments safely with improvements, and builds a personalized understanding of the user's projects and workflows over time. This system is designed to be:
+
+- **Autonomous yet supervised**: Mutations require human approval, but experiments run automatically with statistical backing
+- **Transparent and auditable**: Every decision is traced and explainable
+- **Continuously learning**: From error patterns, user workflows, and A/B test outcomes
+- **Safe to deploy**: Automatic rollback of degrading mutations, circuit breakers for failing components
+
+---
+
+## 👥 Agent Personas and Capabilities
+
+### For GitHub Copilot
+**Strengths**: Code navigation, refactoring, IDE integration  
+**Best for**: Implementing core modules, schema definitions, test writing  
+**Prompt style**: Concise, references to existing patterns, expects full file edits
+
+### For Claude (Code/API)
+**Strengths**: Long-context reasoning, architecture, complex logic  
+**Best for**: Designing the flow, explaining tradeoffs, integration points  
+**Prompt style**: Detailed context, ask for design docs first, then implementation
+
+### For Gemini (CLI/API)
+**Strengths**: Speed, parallel processing, API integration  
+**Best for**: Database schema design, batching operations, performance tuning  
+**Prompt style**: Task-oriented, focus on throughput, API compatibility
+
+### For Cursor/IDEs
+**Strengths**: File context, multi-file editing, refactoring tools  
+**Best for**: Integration work, multi-component changes  
+**Prompt style**: File paths, line numbers, before/after context
 
 **Core Directives for ALL Agents:**
 1.  **Do not use dummy code or `pass` blocks** for core logic unless explicitly instructed to scaffold. 
@@ -15,7 +47,8 @@ Depending on your client interface, adopt the following operational modes:
 
 ---
 
-## 2. Project Context & Architecture Knowledge
+## 📋 Project Context & Architecture Knowledge
+
 The self-improver sits alongside the Jarvis voice agent. The two communicate via a local WebSocket IPC bridge (`jarvis_common/events.py`). The improver analyzes Jarvis's event stream, uses an LLM to critique failures, and proposes updates (`InstructionUpdate`). Instead of blindly applying them, it runs statistical **A/B Tests**. It traces causality, tracks overarching user session goals, and actively injects directives (like forcing cloud fallback or inserting ChromaDB context) back into Jarvis in real-time.
 
 ### Key Existing Components:
@@ -170,8 +203,516 @@ class Directive(BaseModel):
 
 ---
 
-## 5. Execution Rules for AI Agents
+## 5. Complete Phase Specifications
+
+### Phase 1: Controlled Experiment Framework (A/B Testing Mutations)
+**Status**: READY TO IMPLEMENT | **Effort**: 40-60 hours | **Criticality**: HIGHEST
+
+#### Philosophy
+Mutations are no longer binary (approve/reject). Instead, propose a change, run a statistical experiment where 10% of traffic uses the new rule and 90% uses the old, then let math decide the winner. This is the core of the self-improvement loop.
+
+#### Pydantic Models (add to `jarvis_common/schemas.py`)
+```python
+class ExperimentStatus(str, Enum):
+    RUNNING = "running"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+
+class Experiment(BaseModel):
+    experiment_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    mutation_id: str
+    control_config: Dict[str, Any]  # Current routing rules
+    treatment_config: Dict[str, Any]  # Proposed rules from mutation
+    traffic_split: float = 0.10  # % of traffic to treatment
+    min_samples: int = 50  # Minimum samples before evaluation
+    metric: str = "success_rate"  # What to measure
+    status: ExperimentStatus = ExperimentStatus.RUNNING
+    started_at: datetime = Field(default_factory=datetime.now)
+    evaluated_at: Optional[datetime] = None
+
+class ExperimentResult(BaseModel):
+    experiment_id: str
+    winner: str  # "control", "treatment", or "tie"
+    control_success_rate: float
+    treatment_success_rate: float
+    control_samples: int
+    treatment_samples: int
+    p_value: float
+    effect_size: float  # (treatment - control) success rate
+    confidence_interval: Tuple[float, float]  # 95% CI on effect size
+```
+
+#### Files to Implement
+1. **`experiment_engine.py`** (400-500 lines)
+   - `ExperimentEngine.create_experiment()`: Create new A/B test
+   - `ExperimentEngine.route_with_experiment()`: Randomly split traffic
+   - `ExperimentEngine.record_outcome()`: Log success/failure
+   - `ExperimentEngine.evaluate()`: Run scipy.stats.proportions_ztest
+
+2. **Modify `fast_router.py`**
+   - Add `route_with_config()` method to accept explicit config
+
+3. **Modify `structured_logger.py`**
+   - Track experiment_id on every log entry
+   - Allows grouping by treatment/control post-hoc
+
+#### Database Schema
+```sql
+CREATE TABLE experiments (
+    experiment_id TEXT PRIMARY KEY,
+    mutation_id TEXT UNIQUE NOT NULL,
+    traffic_split REAL DEFAULT 0.10,
+    min_samples INTEGER DEFAULT 50,
+    status TEXT DEFAULT 'running',
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    evaluated_at TIMESTAMP
+);
+
+CREATE TABLE experiment_outcomes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment_id TEXT NOT NULL,
+    is_treatment BOOLEAN NOT NULL,
+    task_id TEXT NOT NULL,
+    success BOOLEAN NOT NULL,
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
+);
+
+CREATE TABLE experiment_results (
+    experiment_id TEXT PRIMARY KEY,
+    winner TEXT NOT NULL,  -- control|treatment|tie
+    p_value REAL NOT NULL,
+    control_rate REAL NOT NULL,
+    treatment_rate REAL NOT NULL,
+    effect_size REAL NOT NULL,
+    FOREIGN KEY (experiment_id) REFERENCES experiments(experiment_id)
+);
+```
+
+#### Test Specification
+```python
+# core test: 100 samples (50/50), treatment 20% better → detected as winner
+@pytest.mark.asyncio
+async def test_experiment_statistical_significance():
+    engine = ExperimentEngine(mock_router, mock_db)
+    exp = await engine.create_experiment(mutation, traffic_split=0.5, min_samples=50)
+    
+    # 50 control: 20 successes (40%)
+    # 50 treatment: 30 successes (60%)
+    for i in range(50):
+        await engine.record_outcome(exp.experiment_id, is_treatment=False, success=i < 20)
+        await engine.record_outcome(exp.experiment_id, is_treatment=True, success=i < 30)
+    
+    result = await engine.evaluate(exp)
+    
+    assert result.winner == "treatment"
+    assert result.p_value < 0.05
+    assert result.effect_size == 0.20
+```
+
+#### Definition of Done
+- [ ] experiment_engine.py compiles
+- [ ] scipy.stats.proportions_ztest correctly imported and used
+- [ ] Database tables created
+- [ ] Test passes (p < 0.05 when treatment is 20% better)
+- [ ] Experiment outcomes logged with trace_id and experiment_id
+- [ ] Dashboard shows active experiments and results
+- [ ] No regression in existing router performance
+
+---
+
+### Phase 2: Causal Tracing
+**Status**: READY TO IMPLEMENT | **Effort**: 35-50 hours | **Criticality**: HIGH
+
+#### Philosophy
+Logs currently capture "what failed" but not "why". Causal tracing propagates a `trace_id` through every component of the pipeline so we can answer: "All failures of type X happened when Y was true and Z was true."
+
+#### Pydantic Models
+```python
+class ErrorCategory(str, Enum):
+    LLM_OUTPUT_MALFORMED = "llm_malformed"
+    TOOL_TIMEOUT = "tool_timeout"
+    SANDBOX_DENIED = "sandbox_denied"
+    ROUTER_MISMATCH = "router_mismatch"
+    NETWORK_ERROR = "network_error"
+    MEMORY_MISS = "memory_miss"
+    UNKNOWN = "unknown"
+
+class RouterDecision(BaseModel):
+    chosen_executor: str
+    confidence: float
+    experiment_id: Optional[str] = None
+
+class MemoryRetrieved(BaseModel):
+    query: str
+    retrieved_count: int
+    avg_similarity: float
+
+class CausalTrace(BaseModel):
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: str
+    user_input: str
+    user_input_tokens: int
+    
+    router_decision: RouterDecision
+    experiment_id: Optional[str] = None
+    
+    context_retrieved: Optional[MemoryRetrieved] = None
+    context_retrieval_time_ms: float
+    
+    prompt_full: str  # Full prompt sent to LLM
+    prompt_tokens: int
+    model: str  # gemini-1.5-pro, claude-3-5-sonnet, etc.
+    temperature: float
+    
+    llm_response: str
+    llm_response_tokens: int
+    
+    parse_success: bool
+    error_category: Optional[ErrorCategory] = None
+    
+    outcome: str  # success|failed
+    execution_time_ms: float
+    created_at: datetime = Field(default_factory=datetime.now)
+
+class CausalCluster(BaseModel):
+    cluster_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    error_category: ErrorCategory
+    trace_count: int
+    conditions: Dict[str, Any]  # e.g., {"executor": "local", "prompt_tokens_gt": 2000}
+    success_rate: float
+    common_pattern: str  # Human-readable pattern description
+    recommendation: str  # What to try next
+```
+
+#### Files to Implement
+1. **`causal_tracer.py`** (300-400 lines)
+   - `start_trace()`: Allocate trace_id
+   - `record_router_decision()`: Update with routing info
+   - `record_memory_retrieval()`: Update with memory info
+   - `record_prompt()`: LLM details
+   - `record_outcome()`: Final result
+   - `find_causal_clusters()`: Group failures by conditions
+
+2. **Modify `structured_logger.py`**
+   - Every log entry includes trace_id
+   - All async operations accept trace_id parameter
+
+3. **Modify `executor.py`**
+   - Pass trace_id to all subprocess calls
+   - Log execution time to trace
+
+#### Database Schema
+```sql
+CREATE TABLE causal_traces (
+    trace_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    user_input TEXT,
+    user_input_tokens INTEGER,
+    
+    router_executor TEXT,
+    router_confidence REAL,
+    router_experiment_id TEXT,
+    
+    context_query TEXT,
+    context_retrieved_count INTEGER,
+    context_retrieval_ms REAL,
+    
+    prompt_text TEXT,
+    prompt_tokens INTEGER,
+    model_used TEXT,
+    temperature REAL,
+    
+    llm_response TEXT,
+    llm_response_tokens INTEGER,
+    
+    parse_success BOOLEAN,
+    error_category TEXT,
+    
+    outcome TEXT,  -- success|failed
+    execution_time_ms REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+
+CREATE INDEX idx_traces_session ON causal_traces(session_id);
+CREATE INDEX idx_traces_error_category ON causal_traces(error_category);
+CREATE INDEX idx_traces_executor ON causal_traces(router_executor);
+```
+
+#### Test Specification
+```python
+# Test: Clustering identifies prompt length > 2000 as common factor in failures
+@pytest.mark.asyncio
+async def test_causal_clustering():
+    tracer = CausalTracer(mock_db)
+    
+    # Create 10 traces: local executor, long prompt (>2000 tokens), all failed
+    for i in range(10):
+        trace_id = await tracer.start_trace("session-1", "test")
+        await tracer.record_router_decision(trace_id, "local", 0.9)
+        await tracer.record_prompt(trace_id, "x" * 10000, 2500, {"temperature": 0.3})
+        await tracer.record_outcome(trace_id, "", False, ErrorCategory.LLM_OUTPUT_MALFORMED, "failed", 1000)
+    
+    clusters = await tracer.find_causal_clusters(ErrorCategory.LLM_OUTPUT_MALFORMED)
+    
+    local_long_cluster = [c for c in clusters 
+        if c.conditions.get("executor") == "local" 
+        and c.conditions.get("prompt_tokens_gt_2000")][0]
+    
+    assert local_long_cluster.trace_count == 10
+    assert "prompt" in local_long_cluster.common_pattern.lower()
+```
+
+#### Definition of Done
+- [ ] CausalTrace schema fully implemented
+- [ ] trace_id flows through all components
+- [ ] Clustering algorithm groups by 2+ conditions
+- [ ] Test passes
+- [ ] Dashboard shows top 10 causal clusters
+- [ ] Recommendation engine suggests mutations based on clusters
+
+---
+
+### Phase 3: Session Goal Tracking
+**Status**: READY TO IMPLEMENT | **Effort**: 30-45 hours | **Criticality**: HIGH
+
+#### Philosophy
+Instead of measuring "did this command succeed?", measure "did the user achieve their overarching goal?" This becomes the primary metric for A/B experiments. A session might have 3 command failures but still achieve its goal (if final output was correct).
+
+#### Pydantic Models
+```python
+class Session(BaseModel):
+    session_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    start_time: datetime = Field(default_factory=datetime.now)
+    end_time: Optional[datetime] = None
+    
+    commands_executed: List[str] = []
+    inferred_goal: Optional[str] = None
+    inferred_goal_confidence: float = 0.0
+    
+    goal_achieved: Optional[bool] = None
+    goal_achievement_confidence: float = 0.0
+    goal_achievement_evidence: str = ""
+    
+    total_tasks_count: int = 0
+    successful_tasks_count: int = 0
+    failed_tasks_count: int = 0
+    
+    trace_ids: List[str] = []  # All traces in this session
+
+class SessionMetrics(BaseModel):
+    session_id: str
+    duration_seconds: float
+    task_success_rate: float
+    goal_achieved: bool
+    goal_achievement_confidence: float
+    commands_count: int
+```
+
+#### Files to Implement
+1. **`session_tracker.py`** (350-450 lines)
+   - `start_session()`: Create session
+   - `record_command()`: Add command
+   - `_infer_goal()`: LLM call every 5 commands
+   - `end_session()`: Final evaluation
+   - Track session→trace_id relationship
+
+2. **Modify `structured_logger.py`**
+   - Add session_id to all LogEntry
+   - Track session lifecycle
+
+3. **Integrate with A/B experiments**
+   - Use goal_achievement_rate as experiment metric
+
+#### Database Schema
+```sql
+CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    end_time TIMESTAMP,
+    
+    inferred_goal TEXT,
+    inferred_goal_confidence REAL,
+    inferred_at TIMESTAMP,
+    
+    goal_achieved BOOLEAN,
+    goal_achievement_confidence REAL,
+    goal_evidence TEXT,
+    
+    total_commands INTEGER DEFAULT 0,
+    successful_commands INTEGER DEFAULT 0,
+    
+    overall_success_rate REAL
+);
+
+CREATE TABLE session_traces (
+    session_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    PRIMARY KEY (session_id, trace_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id),
+    FOREIGN KEY (trace_id) REFERENCES causal_traces(trace_id)
+);
+```
+
+#### Test Specification
+```python
+# Test: Goal inference and achievement evaluation
+@pytest.mark.asyncio
+async def test_session_goal_achievement():
+    tracker = SessionGoalTracker(mock_llm, mock_db)
+    
+    # Mock LLM
+    mock_llm.call = AsyncMock(side_effect=[
+        "Set up and test a FastAPI server",
+        '{"achieved": true, "confidence": 0.95, "evidence": "All commands succeeded"}'
+    ])
+    
+    session = await tracker.start_session("session-1")
+    
+    commands = [
+        "pip install fastapi",
+        "python -c 'from fastapi import FastAPI'",
+        "echo 'FastAPI working'"
+    ]
+    
+    for cmd in commands:
+        await tracker.record_command("session-1", cmd)
+    
+    await tracker.end_session("session-1")
+    
+    result = await mock_db.fetch("SELECT goal_achieved, inferred_goal FROM sessions")
+    assert result[0]["goal_achieved"] == True
+    assert "FastAPI" in result[0]["inferred_goal"]
+```
+
+#### Definition of Done
+- [ ] Session tracking implemented
+- [ ] Goal inference happens every 5 commands
+- [ ] Goal achievement evaluated on session end
+- [ ] Stored correctly in database
+- [ ] Test passes
+- [ ] Experiments can use goal_achievement_rate metric
+- [ ] LLM calls cached to reduce API costs
+
+---
+
+### Phases 4-7 (Summary)
+
+**Phase 4: Real-Time Guidance Injection (Bidirectional IPC)**
+- Make IPC bridge bidirectional (currently events flow voice→improver only)
+- Send Directive objects back: RouteToCloudDirective, InjectContextDirective
+- Voice agent must act within 50ms window
+- Files: Modify `ipc_bridge.py`, add directive handler to Jarvis voice agent
+
+**Phase 5: Project Context Graph**
+- Store successful session snapshots in ChromaDB
+- On new session start, semantic query ChromaDB with first 3 commands
+- Pre-load relevant past project context into LLM context window
+- Automatically grows over weeks of use
+- Files: `project_context_manager.py`
+
+**Phase 6: Mutation Impact Report & Rollback Budget**
+- Generate markdown reports 24h after mutation promotion
+- Measure delta in success rate, goal achievement rate, latency vs. pre-mutation baseline
+- Background task checks every 30min: if metrics dropped >5% with 95% confidence, auto-rollback
+- Files: `mutation_impact_engine.py`, background coroutine
+
+**Phase 7: Dataset Quality Scorer**
+- Every new validated example: check diversity (semantic distance to nearest neighbor > 0.3)
+- Check coverage (all 10 scenario categories > 5%)
+- Reject duplicates, flag underrepresented categories
+- Dashboard shows SFT dataset health
+- Files: `dataset_quality_scorer.py`
+
+---
+
+## 6. Execution Rules for AI Agents
 *   **Read before you write**: If you are unsure of an interface, read `executor.py`, `dashboard_api.py`, or `fast_router.py` before modifying.
 *   **Verify syntax**: Ensure imports exist (e.g., `scipy`, `sentence-transformers`, `chromadb`). Add them to `requirements.txt` / install them if missing.
 *   **Step-by-Step**: Execute the sprint in order (Phases 1 -> 7). Do not skip to Phase 7 without the Phase 1/2 tracking infrastructure in place. 
 *   **Test as you go**: Implement the specific Test Spec for the phase before marking it done.
+*   **Database First**: Create all tables before implementing code. Schema must be stable before implementation.
+*   **Backward Compatibility**: Existing tests must pass. If they don't, fix your changes, not the tests.
+
+---
+
+## 7. Testing Strategy (All Phases)
+
+### Unit Tests (Per Module)
+- Mock all external dependencies (LLM, DB, IPC)
+- Test happy path and error cases
+- Minimum 80% code coverage
+
+### Integration Tests
+- End-to-end: user input → router → executor → log → trace → autopsy → mutation → experiment
+- Multi-phase: phase 1 + phase 2, phase 2 + phase 3, etc.
+- Real DB (SQLite in-memory) where possible
+
+### Regression Tests
+- Run existing test suite after each phase
+- Measure performance before/after
+- Alert if metrics degrade >5%
+
+### Load Tests (Phases 3+)
+- 1000+ concurrent sessions
+- 10K traces in causal clustering
+- Vector search latency <100ms
+
+---
+
+## 8. Configuration Reference
+
+### Environment Variables
+```bash
+# Phase 1: Experiments
+EXPERIMENT_TRAFFIC_SPLIT=0.10
+EXPERIMENT_MIN_SAMPLES=50
+
+# Phase 2: Causal Tracing
+ENABLE_CAUSAL_TRACING=true
+TRACE_STORAGE_BACKEND=sqlite
+
+# Phase 3: Session Tracking
+SESSION_INACTIVITY_TIMEOUT=60
+SESSION_GOAL_INFER_INTERVAL=5
+
+# Phase 4: IPC
+IPC_PIPE_NAME=\\\\.\\pipe\\jarvis_improver
+IPC_DIRECTIVE_TIMEOUT_MS=50
+
+# Phase 5: Project Contexts
+CHROMADB_HOST=localhost
+CHROMADB_PORT=8000
+PROJECT_CONTEXT_TOP_K=3
+
+# Phase 6: Impact Reports
+MUTATION_IMPACT_CHECK_INTERVAL_MIN=30
+DEGRADATION_THRESHOLD_PCT=5
+DEGRADATION_CONFIDENCE=0.95
+
+# Phase 7: Dataset Quality
+DATASET_DIVERSITY_THRESHOLD=0.3
+DATASET_COVERAGE_MIN_PCT=5
+```
+
+---
+
+## 9. Success Metrics (Sprint Completion)
+
+| Phase | Success Criteria |
+|-------|-----------------|
+| 1 | Experiment statistical test passes; p<0.05 for 20% improvement |
+| 2 | Causal clusters identified; 2+ conditions per cluster |
+| 3 | Session goal inferred; achievement evaluated with 0.8+ confidence |
+| 4 | Directive fires; voice agent responds within 50ms |
+| 5 | ChromaDB returns top-3 projects; context injected |
+| 6 | Impact report generated; auto-rollback triggered on degradation |
+| 7 | Duplicates rejected; underrepresented categories flagged |
+
+---
+
+**This is the authoritative specification. All agents refer to this document first.**
+
+Version: 2.0.0 | Status: Ready for Implementation | Last Updated: 2026-03-07

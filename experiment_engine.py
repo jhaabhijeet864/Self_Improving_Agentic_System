@@ -1,7 +1,7 @@
 import random
 import logging
 from typing import Tuple, Dict, Any, List
-from scipy.stats import proportions_ztest
+from statsmodels.stats.proportion import proportions_ztest
 from jarvis_common.schemas import Experiment, ExperimentResult, ExperimentStatus
 from mutation import InstructionUpdate
 
