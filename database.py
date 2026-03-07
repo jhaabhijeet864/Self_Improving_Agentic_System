@@ -52,6 +52,19 @@ async def init_db():
                 fitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS prompt_variants (
+                variant_id TEXT PRIMARY KEY,
+                prompt_text TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                parent_a_id TEXT,
+                parent_b_id TEXT,
+                mutations_generated INTEGER DEFAULT 0,
+                mutations_promoted INTEGER DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.commit()
 
 async def save_task(task_id: str, status: str, result: Optional[Any], error: Optional[str], execution_time: float, timestamp: float, metadata: Dict[str, Any]):

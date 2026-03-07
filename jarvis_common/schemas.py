@@ -102,3 +102,20 @@ class CalibrationProfile(BaseModel):
     brier_score: Optional[float] = None
     last_fitted_at: datetime = Field(default_factory=datetime.now)
     records_used: int
+
+class PromptVariant(BaseModel):
+    variant_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    prompt_text: str
+    generation: int
+    parent_a_id: Optional[str] = None
+    parent_b_id: Optional[str] = None
+    mutations_generated: int = 0
+    mutations_promoted: int = 0
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    @property
+    def yield_rate(self) -> float:
+        if self.mutations_generated == 0:
+            return 0.0
+        return self.mutations_promoted / self.mutations_generated

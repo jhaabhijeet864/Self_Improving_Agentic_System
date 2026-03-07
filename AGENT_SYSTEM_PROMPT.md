@@ -663,6 +663,18 @@ async def test_session_goal_achievement():
 
 ---
 
+### Chapter 4: Meta-Learning (Phase 14)
+
+**Phase 14: Prompt Evolution Engine (Learning How to Learn)**
+**Status**: READY TO IMPLEMENT | **Effort**: 25-35 hours | **Criticality**: HIGH
+- Transition the system from a first-order learner (fixed critique prompt) to a second-order meta-learner.
+- Treat critique prompt templates as evolving parameters via a genetic algorithm.
+- Maintain a population of prompt variants and track their **Yield Rate** (fraction of generated mutations that are promoted by A/B tests).
+- Evolve the population by culling low-yield prompts and prompting an LLM to "cross-over" and mutate the structural features of top-performing prompts to spawn the next generation.
+- *Files:* `prompt_evolution.py` (`PromptEvolutionEngine`)
+
+---
+
 ## 6. Execution Rules for AI Agents
 *   **Read before you write**: If you are unsure of an interface, read `executor.py`, `dashboard_api.py`, or `fast_router.py` before modifying.
 *   **Verify syntax**: Ensure imports exist (e.g., `scipy`, `sentence-transformers`, `chromadb`). Add them to `requirements.txt` / install them if missing.
