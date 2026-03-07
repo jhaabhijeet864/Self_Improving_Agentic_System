@@ -65,6 +65,64 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # Phase 15 - Identity Checkpointing
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                parent_id TEXT REFERENCES checkpoints(id),
+                label TEXT NOT NULL,
+                trigger TEXT NOT NULL CHECK (trigger IN ('scheduled', 'pre_mutation', 'post_distillation', 'manual', 'anomaly_detected')),
+                change_narrative TEXT,
+                health_snapshot_json TEXT NOT NULL,
+                instructions_path TEXT,
+                calibration_params_path TEXT,
+                skill_library_path TEXT,
+                classifier_weights_path TEXT,
+                vector_store_snapshot_path TEXT,
+                meta_learning_policy_path TEXT,
+                failure_predictor_path TEXT,
+                sft_dataset_hash TEXT,
+                created_at_timestamp REAL NOT NULL,
+                created_at_utc TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_created_at ON checkpoints(created_at_timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_trigger ON checkpoints(trigger);
+            CREATE INDEX IF NOT EXISTS idx_checkpoints_parent_id ON checkpoints(parent_id);
+
+            CREATE TABLE IF NOT EXISTS checkpoint_diffs (
+                id TEXT PRIMARY KEY,
+                checkpoint_a_id TEXT NOT NULL REFERENCES checkpoints(id),
+                checkpoint_b_id TEXT NOT NULL REFERENCES checkpoints(id),
+                semantic_distance INTEGER CHECK (semantic_distance >= 0 AND semantic_distance <= 540),
+                instruction_delta_json TEXT,
+                calibration_delta_json TEXT,
+                skill_delta_json TEXT,
+                classifier_drift REAL CHECK (classifier_drift >= 0.0 AND classifier_drift <= 1.0),
+                narrative TEXT,
+                created_at TEXT NOT NULL,
+                created_at_utc TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_diffs_checkpoints ON checkpoint_diffs(checkpoint_a_id, checkpoint_b_id);
+            CREATE INDEX IF NOT EXISTS idx_diffs_created_at ON checkpoint_diffs(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS value_drift_events (
+                id TEXT PRIMARY KEY,
+                checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id),
+                alert_level TEXT NOT NULL CHECK (alert_level IN ('WARN', 'ALERT')),
+                metric_name TEXT NOT NULL,
+                metric_value REAL NOT NULL,
+                threshold REAL NOT NULL,
+                description TEXT,
+                created_at TEXT NOT NULL,
+                created_at_utc TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_drift_checkpoint_id ON value_drift_events(checkpoint_id);
+            CREATE INDEX IF NOT EXISTS idx_drift_alert_level ON value_drift_events(alert_level);
+            CREATE INDEX IF NOT EXISTS idx_drift_created_at ON value_drift_events(created_at DESC);
+        """)
+        
         await db.commit()
 
 async def save_task(task_id: str, status: str, result: Optional[Any], error: Optional[str], execution_time: float, timestamp: float, metadata: Dict[str, Any]):

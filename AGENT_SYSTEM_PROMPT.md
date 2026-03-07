@@ -666,12 +666,24 @@ async def test_session_goal_achievement():
 ### Chapter 4: Meta-Learning (Phase 14)
 
 **Phase 14: Prompt Evolution Engine (Learning How to Learn)**
-**Status**: READY TO IMPLEMENT | **Effort**: 25-35 hours | **Criticality**: HIGH
+**Status**: IN PRODUCTION | **Effort**: 25-35 hours | **Criticality**: HIGH
 - Transition the system from a first-order learner (fixed critique prompt) to a second-order meta-learner.
 - Treat critique prompt templates as evolving parameters via a genetic algorithm.
 - Maintain a population of prompt variants and track their **Yield Rate** (fraction of generated mutations that are promoted by A/B tests).
 - Evolve the population by culling low-yield prompts and prompting an LLM to "cross-over" and mutate the structural features of top-performing prompts to spawn the next generation.
 - *Files:* `prompt_evolution.py` (`PromptEvolutionEngine`)
+
+---
+
+### Chapter 5: Identity (Phase 15)
+
+**Phase 15: Checkpoint Manager**
+**Status**: IN PRODUCTION | **Effort**: 35-45 hours | **Criticality**: VERY HIGH
+- Implements comprehensive Behavioral Checkpointing.
+- Snapshots all 8 identity dimensions (instructions, skills, calib params, dataset, local weights, vector store, etc.) synchronously.
+- Generates continuous system identity timeline.
+- Mitigates system mutation breaking dependencies by enforcing semantic distance tracking.
+- *Files:* `checkpoint_manager.py` (`CheckpointManager`)
 
 ---
 

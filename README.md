@@ -53,20 +53,25 @@ The codebase originally contained repetitive boilerplate and bloated line counts
 
 The system operates on an event-driven model. The lifecycle of the improvement loop works as follows:
 
-```mermaid
-graph TD
-    A[Jarvis Voice Agent] -->|Emits Events (IPC)| B(Jarvis Self-Improver)
-    B --> C{Structured Logger}
-    C -->|Stores Logs (SQLite)| D[(jarvis_data.sqlite)]
-    D --> E[Autopsy Analyzer]
-    E -->|Identifies Patterns| F[Self-Critique Engine]
-    F -->|Queries Cloud LLM| G[LLM Critique Response]
-    G --> H[Mutation Engine]
-    H -->|Requests Approval| I{Human-in-the-Loop Gate}
-    I -->|Approved| J[Regression Test Suite]
-    J -->|Passes| K[Update Agent Instructions]
-    I -->|Rejected| L[Discard & Log]
-```
+-----------+-----------+          +-----------+-----------+
+               |                                  ^
+               | (JSON Events via IPC)            |
+               +----------------------------------+
+                                  |
+                                  v
+                       +-----------------------+      +-------------------+
+                       |   Structured Logger   +------>  SQLite Database   |
+                       +-----------+-----------+      +---------+---------+
+                                   |                            |
+                       +-----------v-----------+                |
+                       |    Autopsy Analyzer   <----------------+
+                       +-----------+-----------+
+                                   |
+                       +-----------v-----------+      +-------------------+
+                       |  Self-Critique Engine +------>     Cloud LLM     |
+                       +-----------+-----------+      +-------------------+
+                                   |
+                       +
 
 ### Core Components
 1. **Executor Engine (`executor.py`)**: Handles sandboxed execution of testing and background refinement tasks using `win32job` limits.
