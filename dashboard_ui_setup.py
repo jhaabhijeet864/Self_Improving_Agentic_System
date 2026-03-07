@@ -19,6 +19,8 @@ def create_dashboard_ui():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jarvis-OS Dashboard</title>
+    <!-- Chart.js library (Problem 1: Add Chart.js import) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js" defer></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; }
@@ -65,7 +67,69 @@ def create_dashboard_ui():
         .tasks-table td { padding: 12px; border-bottom: 1px solid #334155; }
         .tasks-table tr:hover { background: #0f172a; }
         .footer { text-align: center; padding: 20px; color: #64748b; font-size: 12px; }
-        @media (max-width: 768px) { .task-form { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr; } }
+        /* Problem 6: Toast notification styles */
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 12px 16px; border-radius: 6px; font-weight: 500; animation: slideIn 0.3s ease-out; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+        .toast-success { background: #10b981; color: white; }
+        .toast-error { background: #ef4444; color: white; }
+        .toast-info { background: #3b82f6; color: white; }
+        @keyframes slideIn { from { transform: translateX(400px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideOut { to { transform: translateX(400px); opacity: 0; } }
+        .toast.fade-out { animation: slideOut 0.3s ease-out forwards; }
+        /* Problem 9: Latency budget styles */
+        .latency-bar { height: 24px; background: #334155; border-radius: 4px; overflow: hidden; margin: 8px 0; position: relative; }
+        .latency-fill { height: 100%; background: #10b981; transition: width 0.3s, background-color 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; }
+        .latency-fill.warning { background: #f59e0b; }
+        .latency-fill.critical { background: #ef4444; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .latency-stage { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .latency-label { font-size: 12px; font-weight: bold; color: #cbd5e1; }
+        /* Problem 10: Log stream styles */
+        #log-stream { background: #0f172a; font-family: 'Courier New', monospace; font-size: 12px; height: 300px; overflow-y: auto; padding: 10px; border-radius: 4px; border: 1px solid #334155; }
+        .log-entry { margin: 4px 0; padding: 4px; border-left: 3px solid #334155; padding-left: 8px; font-size: 11px; }
+        .log-entry.error { border-left-color: #ef4444; color: #fca5a5; }
+        .log-entry.warn { border-left-color: #f59e0b; color: #fef08a; }
+        .log-entry.info { border-left-color: #3b82f6; color: #bfdbfe; }
+        .log-source { font-weight: bold; margin-right: 8px; }
+        .log-source-jarvis { color: #10b981; }
+        .log-source-improver { color: #8b5cf6; }
+        .log-source-dashboard { color: #f59e0b; }
+        .log-controls { margin-bottom: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
+        .log-controls button { padding: 6px 12px; font-size: 11px; }
+        .log-filter { padding: 6px 12px; background: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #e2e8f0; }
+        /* Problem 4: Approval gate styles */
+        .approval-item { background: #0f172a; padding: 12px; margin: 8px 0; border-left: 4px solid #8b5cf6; border-radius: 4px; }
+        .approval-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px; }
+        .approval-title { color: #60a5fa; font-weight: bold; }
+        .confidence-badge { padding: 4px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; }
+        .confidence-high { background: #10b981; color: white; }
+        .confidence-medium { background: #f59e0b; color: white; }
+        .confidence-low { background: #ef4444; color: white; }
+        .approval-actions { display: flex; gap: 8px; }
+        .approval-actions button { padding: 6px 12px; font-size: 11px; }
+        #approval-badge { padding: 8px 12px; border-radius: 4px; background: #ef4444; color: white; font-weight: bold; animation: pulse 1s infinite; }
+        #approval-badge[style*="display: none"] { display: none !important; }
+        /* Problem 12: Mutation history styles */
+        .mutation-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .mutation-table th { background: #0f172a; padding: 12px; text-align: left; border-bottom: 2px solid #334155; }
+        .mutation-table td { padding: 12px; border-bottom: 1px solid #334155; }
+        .status-applied { color: #10b981; font-weight: bold; }
+        .status-rolled-back { color: #ef4444; font-weight: bold; }
+        .modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
+        .modal.show { display: flex; align-items: center; justify-content: center; }
+        .modal-content { background: #1e293b; padding: 20px; border-radius: 8px; max-width: 800px; max-height: 600px; overflow-y: auto; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .modal-close { font-size: 24px; cursor: pointer; color: #94a3b8; }
+        .diff-view { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0; }
+        .diff-column { background: #0f172a; border: 1px solid #334155; border-radius: 4px; padding: 10px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 11px; }
+        .diff-line-added { background: #10b98133; color: #86efac; }
+        .diff-line-removed { background: #ef444433; color: #fca5a5; }
+        /* IPC status badge */
+        #ipc-status { padding: 8px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .ipc-live { background: #3b82f6; color: white; }
+        .ipc-stale { background: #f59e0b; color: white; }
+        .ipc-down { background: #ef4444; color: white; }
+        @media (max-width: 768px) { .task-form { grid-template-columns: 1fr; } .charts-section { grid-template-columns: 1fr; } .diff-view { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>

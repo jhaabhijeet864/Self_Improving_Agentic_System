@@ -136,6 +136,14 @@ class Mutation:
                 "applied_at": datetime.now().isoformat(),
             }
             
+            # Persist git-style JSON version history
+            if update.confidence_score >= 0.5:
+                import os
+                os.makedirs("mutations", exist_ok=True)
+                snapshot_path = f"mutations/v_{int(update.timestamp)}_{update.id[:8]}.json"
+                with open(snapshot_path, "w") as f:
+                    json.dump(asdict(update), f, indent=2)
+            
             logger.info(f"Applied update: {update.id}")
             return True
             

@@ -9,6 +9,8 @@ from dataclasses import dataclass, asdict
 from collections import OrderedDict
 from datetime import datetime
 import logging
+import chromadb
+from chromadb.utils import embedding_functions
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +371,13 @@ class MemoryManager:
         """
         self.db = db
         self.short_term = ShortTermMemory(short_term_size)
+        
+        try:
+            self.semantic = SemanticMemory()
+        except Exception as e:
+            logger.error(f"Failed to initialize ChromaDB Semantic Memory: {e}")
+            self.semantic = None
+            
         self.redis_long_term = None
         if redis_url:
             self.redis_long_term = DistributedMemory(redis_url)
@@ -386,6 +395,7 @@ class MemoryManager:
         persistent: bool = False,
         ttl: Optional[float] = None,
         priority: int = 0,
+        semantic: bool = False,
     ):
         """
         Store a value in memory
@@ -398,6 +408,15 @@ class MemoryManager:
             elif self.db:
                 import time
                 await self.db.set_memory(key, value, timestamp=time.time(), ttl=ttl, priority=priority)
+                
+        if semantic and self.semantic:
+            if isinstance(value, str):
+                self.semantic.store_document(doc_id=key, text=value)
+            elif isinstance(value, dict):
+                import json
+                self.semantic.store_document(doc_id=key, text=json.dumps(value), metadata=value)
+            else:
+                self.semantic.store_document(doc_id=key, text=str(value))
     
     async def retrieve(self, key: str) -> Optional[Any]:
         """
@@ -424,6 +443,30 @@ class MemoryManager:
         self.stats["misses"] += 1
         return None
     
+    async def search_semantic(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        """Search memory semantically using ChromaDB"""
+        if not self.semantic:
+            return []
+        
+        results = self.semantic.search(query, n_results)
+        
+        formatted_results = []
+        if results and 'documents' in results and results['documents']:
+            docs = results['documents'][0]
+            metadatas = results['metadatas'][0] if 'metadatas' in results and results['metadatas'] else [{}] * len(docs)
+            ids = results['ids'][0] if 'ids' in results and results['ids'] else []
+            distances = results['distances'][0] if 'distances' in results and results['distances'] else [0] * len(docs)
+            
+            for i in range(len(docs)):
+                formatted_results.append({
+                    'id': ids[i] if i < len(ids) else '',
+                    'text': docs[i],
+                    'metadata': metadatas[i],
+                    'distance': distances[i]
+                })
+                
+        return formatted_results
+
     async def delete(self, key: str) -> bool:
         """Delete from both memories"""
         short_deleted = self.short_term.delete(key)
@@ -469,3 +512,40 @@ class MemoryManager:
                 if total_accesses > 0 else 0
             ),
         }
+
+class SemanticMemory:
+    """
+    Vector Space Memory backed by ChromaDB.
+    Enables semantic similarity searches.
+    """
+    def __init__(self, collection_name="jarvis_semantic_memory", db_path="./chroma_db"):
+        self.client = chromadb.PersistentClient(path=db_path)
+        # Uses sentence-transformers internally
+        self.embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+        self.collection = self.client.get_or_create_collection(
+            name=collection_name, 
+            embedding_function=self.embedding_fn
+        )
+
+    def store_document(self, doc_id: str, text: str, metadata: dict = None):
+        """Vectorize and store a document"""
+        if metadata is None:
+            metadata = {}
+        # Ensure we're adding or updating
+        self.collection.upsert(
+            documents=[text],
+            metadatas=[metadata],
+            ids=[doc_id]
+        )
+
+    def search(self, query: str, n_results: int = 5) -> Dict[str, Any]:
+        """Perform a semantic knn search"""
+        if self.collection.count() == 0:
+            return {"documents": [], "metadatas": [], "distances": []}
+            
+        num = min(n_results, self.collection.count())
+        results = self.collection.query(
+            query_texts=[query],
+            n_results=num
+        )
+        return results

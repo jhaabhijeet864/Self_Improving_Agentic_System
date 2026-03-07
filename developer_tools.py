@@ -73,6 +73,40 @@ class CLIExecutor(Executor):
                     env=env
                 )
                 
+                hjob = None
+                try:
+                    import win32job
+                    import win32api
+                    import win32con
+                    import sys
+                    
+                    if sys.platform == "win32":
+                        # Create a rigid Sandboxed Job Object
+                        hjob = win32job.CreateJobObject(None, "")
+                        info = win32job.QueryInformationJobObject(hjob, win32job.JobObjectExtendedLimitInformation)
+                        
+                        info['BasicLimitInformation']['LimitFlags'] = (
+                            win32job.JOB_OBJECT_LIMIT_PROCESS_MEMORY |
+                            win32job.JOB_OBJECT_LIMIT_JOB_MEMORY | 
+                            win32job.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                        )
+                        # 512MB RAM Cap
+                        limit_mb = 512 * 1024 * 1024
+                        info['ProcessMemoryLimit'] = limit_mb
+                        info['JobMemoryLimit'] = limit_mb
+                        
+                        win32job.SetInformationJobObject(hjob, win32job.JobObjectExtendedLimitInformation, info)
+                        
+                        # Tie the Popen Process to the Job Jail
+                        hprocess = win32api.OpenProcess(win32con.PROCESS_ALL_ACCESS, False, process.pid)
+                        try:
+                            win32job.AssignProcessToJobObject(hjob, hprocess)
+                            logger.info(f"Successfully jailed PID {process.pid} within Windows Job Object limits.")
+                        finally:
+                            win32api.CloseHandle(hprocess)
+                except Exception as ex:
+                    logger.error(f"Failed to apply Windows Job limits to subprocess: {ex}")
+                
                 try:
                     # Wait for completion, bounded by our strict timeout
                     stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -80,8 +114,8 @@ class CLIExecutor(Executor):
                         timeout=self.timeout
                     )
                     
-                    stdout = stdout_bytes.decode('utf-8').strip() if stdout_bytes else ""
-                    stderr = stderr_bytes.decode('utf-8').strip() if stderr_bytes else ""
+                    stdout = stdout_bytes.decode('utf-8', errors='replace').strip() if stdout_bytes else ""
+                    stderr = stderr_bytes.decode('utf-8', errors='replace').strip() if stderr_bytes else ""
                     
                     if process.returncode == 0:
                         result.status = TaskStatus.COMPLETED
@@ -118,6 +152,8 @@ class CLIExecutor(Executor):
             logger.error(f"CLI Executor task {task_id} failed to launch: {e}")
             
         finally:
+            if 'hjob' in locals() and hjob:
+                pass # Job is destroyed when hjob python reference is gc'd / killed.
             result.execution_time = time.time() - start_time
             self.tasks[task_id] = result
             

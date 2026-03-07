@@ -14,9 +14,10 @@ from autopsy import Autopsy, LogEntry
 from mutation import Mutation
 from memory_manager import MemoryManager
 from fast_router import FastRouter, TaskPriority
+from ml_router import MLRouter
 from structured_logger import StructuredLogger
 from database import JarvisDatabase
-
+from ipc_bridge import IPCBridge
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,8 @@ class JarvisOS:
             short_term_size=config.memory_size,
             redis_url=config.redis_url,
         )
-        self.router = FastRouter()
+        self.router = MLRouter()
+        self.ipc_bridge = IPCBridge(agent=self)
         
         self.running = False
         self.task_id_counter = 0
@@ -89,6 +91,9 @@ class JarvisOS:
         await self.executor.load_state()
         await self.autopsy.load_state()
         
+        # Start IPC boundary for Swara AI events
+        await self.ipc_bridge.start()
+        
         self.logger.info("Agent started", extra={"phase": "initialization"})
         
         if self.config.auto_optimize:
@@ -98,6 +103,7 @@ class JarvisOS:
     async def stop(self):
         """Stop the agent"""
         self.running = False
+        await self.ipc_bridge.stop()
         self.logger.info("Agent stopped")
     
     async def execute_task(
@@ -156,6 +162,19 @@ class JarvisOS:
             )
             
             execution_time = time.time() - start_time
+            
+            # --- GAP 5, 12: Pipeline Latency SLA limits ---
+            # Strict 2.0s limit for Tier-1 (High Priority+) tasks
+            if priority in [TaskPriority.HIGH, TaskPriority.CRITICAL] and execution_time > 2.0:
+                self.logger.warning(f"SLA VIOLATION: Task {task_id} took {execution_time:.2f}s (Limit: 2.0s)", extra={"tags": {"sla_breach": True}})
+                self.autopsy.add_log(LogEntry(
+                    timestamp=time.time(),
+                    level="ERROR",
+                    message=f"SLA VIOLATION: Execution pipeline exceeded 2.0s maximum allowed latency.",
+                    task_id=task_id,
+                    duration=execution_time,
+                    error="SLA_TIMEOUT_EXCEEDED"
+                ))
             
             # Log task completion
             self.logger.log_task_complete(task_id, execution_time, result.result)

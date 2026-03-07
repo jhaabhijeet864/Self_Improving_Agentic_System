@@ -3,17 +3,32 @@ Jarvis-OS Dashboard API - Complete FastAPI Implementation
 Provides real-time metrics, WebSocket support, and agent control
 """
 
-from fastapi import FastAPI, WebSocket, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, WebSocket, HTTPException, Query, BackgroundTasks, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import asyncio
 import json
 import time
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import asdict
 import os
+
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import Depends, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+import jwt
+import database
+
+import jwt
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Import Jarvis components
 from jarvis_os import JarvisOS, AgentConfig
@@ -26,6 +41,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Rate Limiter setup
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS middleware for cross-origin requests
 app.add_middleware(
     CORSMiddleware,
@@ -35,9 +55,70 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# JWT Auth Configuration
+JARVIS_ADMIN_SECRET = os.getenv("JARVIS_ADMIN_SECRET", "super-secret-default-key")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440 # 24 hours
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, JARVIS_ADMIN_SECRET, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def verify_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, JARVIS_ADMIN_SECRET, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return username
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+@app.post("/api/auth/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    # In a real app we'd verify against a DB. Here we use the admin secret as password.
+    if form_data.password != JARVIS_ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="Incorrect password or secret")
+    access_token = create_access_token(data={"sub": form_data.username})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 # Global agent instance
 agent: Optional[JarvisOS] = None
 active_connections: List[WebSocket] = []
+
+# --- Auth & Rate Limiting (Gaps 8, 18) ---
+JARVIS_ADMIN_SECRET = os.environ.get('JARVIS_ADMIN_SECRET', 'secret')
+ALGORITHM = 'HS256'
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl='/api/token')
+
+def verify_token(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = jwt.decode(token, JARVIS_ADMIN_SECRET, algorithms=[ALGORITHM])
+        return payload
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail='Invalid token')
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+@app.post('/api/token')
+@limiter.limit('5/minute')
+async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+    if form_data.password != JARVIS_ADMIN_SECRET:
+        raise HTTPException(status_code=400, detail='Incorrect password')
+    token = jwt.encode({'sub': form_data.username}, JARVIS_ADMIN_SECRET, algorithm=ALGORITHM)
+    return {'access_token': token, 'token_type': 'bearer'}
+
+# -----------------------------------------
+
 
 
 # ============================================================================
@@ -88,7 +169,8 @@ async def broadcast_message(message: Dict[str, Any]):
 # ============================================================================
 
 @app.post("/api/agent/start")
-async def start_agent(config: Optional[AgentConfig] = None):
+@limiter.limit("10/minute")
+async def start_agent(request: Request, config: Optional[AgentConfig] = None, token: dict = Depends(verify_token)):
     """Start the Jarvis-OS agent"""
     global agent
     
@@ -107,7 +189,8 @@ async def start_agent(config: Optional[AgentConfig] = None):
 
 
 @app.post("/api/agent/stop")
-async def stop_agent():
+@limiter.limit("10/minute")
+async def stop_agent(request: Request, token: dict = Depends(verify_token)):
     """Stop the Jarvis-OS agent"""
     global agent
     
@@ -119,7 +202,8 @@ async def stop_agent():
 
 
 @app.get("/api/agent/status")
-async def get_agent_status():
+@limiter.limit("60/minute")
+async def get_agent_status(request: Request, token: dict = Depends(verify_token)):
     """Get current agent status"""
     if not agent:
         return {"status": "not_running"}
@@ -128,7 +212,8 @@ async def get_agent_status():
 
 
 @app.get("/api/agent/metrics")
-async def get_agent_metrics():
+@limiter.limit("60/minute")
+async def get_agent_metrics(request: Request, token: dict = Depends(verify_token)):
     """Get detailed agent metrics"""
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
@@ -141,7 +226,8 @@ async def get_agent_metrics():
 
 
 @app.get("/api/agent/config")
-async def get_agent_config():
+@limiter.limit("60/minute")
+async def get_agent_config(request: Request, token: dict = Depends(verify_token)):
     """Get agent configuration"""
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
@@ -151,7 +237,8 @@ async def get_agent_config():
 
 
 @app.put("/api/agent/config")
-async def update_agent_config(config_update: Dict[str, Any]):
+@limiter.limit("10/minute")
+async def update_agent_config(request: Request, config_update: Dict[str, Any], token: dict = Depends(verify_token)):
     """Update agent configuration"""
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
@@ -168,12 +255,15 @@ async def update_agent_config(config_update: Dict[str, Any]):
 # ============================================================================
 
 @app.post("/api/tasks/submit")
+@limiter.limit("30/minute")
 async def submit_task(
+    request: Request,
     task_type: str,
     params: Dict[str, Any] = None,
     priority: str = "NORMAL",
+    current_user: str = Depends(verify_token)
 ):
-    """Submit a new task to the agent"""
+    """Submit a new task to the agent - Rate limited to 30 per minute"""
     if not agent or not agent.running:
         raise HTTPException(status_code=400, detail="Agent not running")
     
@@ -203,7 +293,8 @@ async def submit_task(
 
 
 @app.get("/api/tasks/status/{task_id}")
-async def get_task_status(task_id: str):
+@limiter.limit("120/minute")
+async def get_task_status(request: Request, task_id: str, token: dict = Depends(verify_token)):
     """Get status of a specific task"""
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
@@ -222,7 +313,10 @@ async def get_task_status(task_id: str):
 
 
 @app.get("/api/tasks/all")
-async def get_all_tasks(
+@limiter.limit("30/minute")
+async def get_all_tasks_endpoint(
+    request: Request,
+    token: dict = Depends(verify_token),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
@@ -230,22 +324,11 @@ async def get_all_tasks(
     if not agent:
         raise HTTPException(status_code=400, detail="Agent not running")
     
-    all_results = await agent.executor.get_all_results()
-    tasks = list(all_results.items())[offset:offset + limit]
-    
+    all_tasks_db = await database.get_all_tasks(limit=limit, offset=offset)
     return {
-        "total": len(all_results),
         "limit": limit,
         "offset": offset,
-        "tasks": [
-            {
-                "task_id": task_id,
-                "status": result.status.value,
-                "execution_time": result.execution_time,
-                "timestamp": result.timestamp,
-            }
-            for task_id, result in tasks
-        ]
+        "tasks": all_tasks_db
     }
 
 
@@ -400,7 +483,8 @@ async def get_root():
 async def startup_event():
     """Initialize on startup"""
     global agent
-    print("Dashboard API started")
+    await database.init_db()
+    print("Dashboard API started with DB")
 
 
 @app.on_event("shutdown")
