@@ -53,6 +53,32 @@ class StructuredFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
+
+class ErrorCategory(str, Enum):
+    LLM_OUTPUT_MALFORMED = "LLMOutputMalformed"
+    TOOL_CALL_TIMEOUT = "ToolCallTimeout"
+    SANDBOX_DENIED = "SandboxPermissionDenied"
+    ROUTER_MISMATCH = "RouterMisclassification"
+    NETWORK_ERROR = "NetworkError"
+    UNKNOWN = "UnknownError"
+
+class ErrorClassifier:
+    """Gap 10: Structured Error Classification"""
+    @staticmethod
+    def classify(error_msg: str) -> ErrorCategory:
+        error_msg = str(error_msg).lower()
+        if "jsondecodeerror" in error_msg or "expecting value" in error_msg:
+            return ErrorCategory.LLM_OUTPUT_MALFORMED
+        if "timeout" in error_msg:
+            return ErrorCategory.TOOL_CALL_TIMEOUT
+        if "permission" in error_msg or "access is denied" in error_msg:
+            return ErrorCategory.SANDBOX_DENIED
+        if "connection" in error_msg or "socket" in error_msg:
+            return ErrorCategory.NETWORK_ERROR
+        if "route" in error_msg or "match" in error_msg:
+            return ErrorCategory.ROUTER_MISMATCH
+        return ErrorCategory.UNKNOWN
+
 class StructuredLogger:
     """
     Structured logging system

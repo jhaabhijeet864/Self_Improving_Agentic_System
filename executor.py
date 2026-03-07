@@ -35,6 +35,43 @@ class TaskResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+
+class CircuitBreakerError(Exception):
+    pass
+
+class CircuitBreaker:
+    """Gap 12: Circuit breaker for latency budget"""
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: float = 30.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.last_failure_time = 0.0
+        self.state = "CLOSED"
+
+    def record_failure(self):
+        self.failures += 1
+        self.last_failure_time = time.time()
+        if self.failures >= self.failure_threshold:
+            self.state = "OPEN"
+
+    def record_success(self):
+        self.failures = 0
+        self.state = "CLOSED"
+
+    def can_execute(self) -> bool:
+        if self.state == "CLOSED":
+            return True
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = "HALF_OPEN"
+                return True
+            return False
+        if self.state == "HALF_OPEN":
+            return True
+        return True
+
+global_circuit_breaker = CircuitBreaker()
+
 class Executor:
     """
     Core executor component responsible for task execution
@@ -85,8 +122,16 @@ class Executor:
             status=TaskStatus.PENDING,
         )
         
+
+        if not global_circuit_breaker.can_execute():
+            result.status = TaskStatus.FAILED
+            result.error = "Circuit Breaker OPEN - Routing to cloud fallback"
+            return result
+
+        latency_budget = kwargs.pop('latency_budget', self.timeout)
         try:
             async with self.semaphore:
+
                 result.status = TaskStatus.RUNNING
                 start_time = time.time()
                 
